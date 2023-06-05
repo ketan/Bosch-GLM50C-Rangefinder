@@ -1,5 +1,5 @@
 # Bosch-GLM50C-Rangefinder
-Program to read measurements from Bosch GLM 50C. May work with othe Bosch laser meters, YMMV.
+Program to read measurements from [Bosch GLM 50C](https://www.amazon.in/Bosch-GLM-50-27-CG-Bluetooth/dp/B09R3RYPK5). May work with othe Bosch laser meters, YMMV.
 
 I have one of these Bosch GLM 50-27CG laser meters, that is unfortunately does not provide any programs or drivers for macos. I wanted to get data from the laser meter into a fairly complex spreadsheets, and was disappointed to find no alternative. After reading a few posts and reverse-engineering some bluetooth protocol dumps from measureon app on android.
 
