@@ -1,0 +1,10 @@
+asyncio==3.4.3
+bleak==0.20.2
+pynput==1.7.6
+pyobjc-core==9.1.1
+pyobjc-framework-ApplicationServices==9.1.1
+pyobjc-framework-Cocoa==9.1.1
+pyobjc-framework-CoreBluetooth==9.1.1
+pyobjc-framework-libdispatch==9.1.1
+pyobjc-framework-Quartz==9.1.1
+six==1.16.0
