@@ -16,7 +16,7 @@ def notification_handler(characteristic: BleakGATTCharacteristic, data: bytearra
     if data.startswith(b'\xc0\x55\x10\x06'):
         logger.info("%r", data[7:11].hex())
         # bytes 7-10 contain the length (as little endian 32-bit float)
-        length = str(int(struct.unpack('<f', data[7:11])[0] * 1000))
+        length = str(round(struct.unpack('<f', data[7:11])[0] * 1000))
         # Type the length into the current program.
         keyboard.type(length)
         keyboard.type("\n")
