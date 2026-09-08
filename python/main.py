@@ -50,12 +50,7 @@ if __name__ == "__main__":
         format="%(asctime)-15s %(name)-8s %(levelname)s: %(message)s",
     )
 
-    loop = asyncio.get_event_loop()
     try:
-        asyncio.ensure_future(main())
-        loop.run_forever()
+        asyncio.run(main())
     except KeyboardInterrupt:
         pass
-    finally:
-        print("Closing Loop")
-        loop.close()
