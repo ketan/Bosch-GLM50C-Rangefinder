@@ -61,6 +61,11 @@ union float2bytes {
 };
 
 void loop() {
+    if (!bleKeyboard.isConnected()) {
+    delay(100);
+    return;  // let Windows pair first
+  }
+
   NimBLEScanResults foundDevices = pBLEScan->start(3);
 
   Serial.printf("Found %d devices\r\n", foundDevices.getCount());
@@ -97,9 +102,9 @@ void loop() {
                     buf.b[1] = pData[8];
                     buf.b[2] = pData[9];
                     buf.b[3] = pData[10];
-                    Serial.printf("Got length, %.3fm\r\n", buf.f);
+                    Serial.printf("Got length, %.0fmm\r\n", buf.f * 1000.0f);
                     if (bleKeyboard.isConnected()) {
-                      bleKeyboard.printf("%.3f", buf.f);
+                      bleKeyboard.printf("%.0f", buf.f * 1000.0f);
                       bleKeyboard.write(KEY_RETURN);
                     }
                   } else {
