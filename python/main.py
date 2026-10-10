@@ -4,15 +4,22 @@ import json
 import logging
 import os
 import struct
+import subprocess
 from pynput.keyboard import Controller
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 
 charUUID = '02a6c0d1-0451-4000-b000-fb3210111989'
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
+CONNECT_SOUND = os.path.join(os.path.dirname(__file__), 'sounds', 'Glass.aiff')
+DISCONNECT_SOUND = os.path.join(os.path.dirname(__file__), 'sounds', 'Basso.aiff')
 
 logger = logging.getLogger(__name__)
 keyboard = Controller()
+
+def beep(sound_file):
+    # fire-and-forget so playback doesn't block the event loop
+    subprocess.Popen(['afplay', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -68,8 +75,7 @@ def prompt_device_choice(candidates):
 def select_glm_device(devices):
     glm_devices = [d for d in devices if d.name and "GLM" in d.name.upper()]
     if not glm_devices:
-        logger.error("could not find any GLM device")
-        exit(0)
+        return None
     elif len(glm_devices) == 1:
         return glm_devices[0]
     else:
@@ -77,14 +83,19 @@ def select_glm_device(devices):
 
 async def find_device():
     known_addresses = load_config()
-    known_devices = await find_known_device(known_addresses)
 
-    if known_devices:
-        device = known_devices[0] if len(known_devices) == 1 else prompt_device_choice(known_devices)
-    else:
-        devices = await scan_for_devices()
-        device = select_glm_device(devices)
-        save_config(device.address, known_addresses)
+    device = None
+    while device is None:
+        known_devices = await find_known_device(known_addresses)
+        if known_devices:
+            device = known_devices[0] if len(known_devices) == 1 else prompt_device_choice(known_devices)
+        else:
+            devices = await scan_for_devices()
+            device = select_glm_device(devices)
+            if device is None:
+                logger.error("could not find any GLM device, retrying...")
+                continue
+            save_config(device.address, known_addresses)
 
     return device
 
@@ -93,6 +104,7 @@ async def measure_loop(device):
     try:
         async with BleakClient(device) as client:
             logger.info("Connected")
+            beep(CONNECT_SOUND)
             await asyncio.sleep(0.5)
             # Listen to any measurement notifications when the green "measure" button is pressed on the laser meter
             await client.start_notify(charUUID, notification_handler)
@@ -105,10 +117,14 @@ async def measure_loop(device):
     except Exception as e:
         logger.error("connection error: %s", e)
         logger.error("tip: if the device address changed, delete %s and run again", CONFIG_FILE)
+    finally:
+        beep(DISCONNECT_SOUND)
 
 async def main():
-    device = await find_device()
-    await measure_loop(device)
+    while True:
+        device = await find_device()
+        await measure_loop(device)
+        logger.info("device disconnected, resuming scan...")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
