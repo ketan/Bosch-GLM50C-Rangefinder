@@ -1,18 +1,137 @@
 #include <Arduino.h>
 #include <BleKeyboard.h>
 #include <NimBLEDevice.h>
+#include <TFT_eSPI.h>
+#include <cassert>
 
 NimBLEScan *pBLEScan;
+NimBLEClient *glmClient;
 BleKeyboard bleKeyboard("Bosch keyboard");
+TFT_eSPI tft;
+
+constexpr uint8_t kLeftButtonPin = 0;
+constexpr uint8_t kRightButtonPin = 35;
+constexpr uint8_t kDisplayBacklightPin = 4;
+constexpr uint8_t kBacklightChannel = 0;
+constexpr uint8_t kBacklightBrightness = 64;
+constexpr unsigned long kDebounceMs = 25;
+constexpr unsigned long kHoldMs = 350;
+constexpr unsigned long kRepeatMs = 120;
+
+struct NavigationButton {
+  uint8_t pin;
+  uint8_t tapKey;
+  uint8_t holdKey;
+  bool reading;
+  bool pressed;
+  bool holdSent;
+  unsigned long changedAt;
+  unsigned long pressedAt;
+  unsigned long repeatedAt;
+
+  NavigationButton(uint8_t pin, uint8_t tapKey, uint8_t holdKey)
+      : pin(pin),
+        tapKey(tapKey),
+        holdKey(holdKey),
+        reading(false),
+        pressed(false),
+        holdSent(false),
+        changedAt(0),
+        pressedAt(0),
+        repeatedAt(0) {}
+};
+
+NavigationButton leftButton(kLeftButtonPin, KEY_LEFT_ARROW, KEY_UP_ARROW);
+NavigationButton rightButton(kRightButtonPin, KEY_RIGHT_ARROW,
+                             KEY_DOWN_ARROW);
+SemaphoreHandle_t keyboardMutex;
+
+void sendKey(uint8_t key) {
+  xSemaphoreTake(keyboardMutex, portMAX_DELAY);
+  if (bleKeyboard.isConnected()) {
+    bleKeyboard.write(key);
+  }
+  xSemaphoreGive(keyboardMutex);
+}
+
+void pollNavigationButton(NavigationButton &button) {
+  const unsigned long now = millis();
+  const bool reading = digitalRead(button.pin) == LOW;
+
+  if (reading != button.reading) {
+    button.reading = reading;
+    button.changedAt = now;
+  }
+  if (now - button.changedAt < kDebounceMs) {
+    return;
+  }
+
+  if (reading != button.pressed) {
+    button.pressed = reading;
+    if (button.pressed) {
+      button.pressedAt = now;
+      button.holdSent = false;
+    } else if (!button.holdSent) {
+      sendKey(button.tapKey);
+    }
+  }
+
+  if (!button.pressed) {
+    return;
+  }
+
+  if (!button.holdSent && now - button.pressedAt >= kHoldMs) {
+    sendKey(button.holdKey);
+    button.holdSent = true;
+    button.repeatedAt = now;
+  } else if (button.holdSent && now - button.repeatedAt >= kRepeatMs) {
+    sendKey(button.holdKey);
+    button.repeatedAt = now;
+  }
+}
+
+void pollNavigation(void *) {
+  for (;;) {
+    pollNavigationButton(leftButton);
+    pollNavigationButton(rightButton);
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+}
+
+void drawNavigationLegend() {
+  ledcSetup(kBacklightChannel, 12000, 8);
+  ledcAttachPin(kDisplayBacklightPin, kBacklightChannel);
+  ledcWrite(kBacklightChannel, kBacklightBrightness);
+  tft.init();
+  tft.setRotation(0);
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawCentreString("LEFT", 67, 12, 4);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.fillTriangle(20, 65, 105, 35, 105, 95, TFT_GREEN);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.fillTriangle(67, 100, 35, 125, 100, 125, TFT_YELLOW);
+
+  tft.drawFastHLine(0, 135, tft.width(), TFT_DARKGREY);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawCentreString("RIGHT", 67, 147, 4);
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.fillTriangle(115, 200, 30, 170, 30, 230, TFT_GREEN);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.fillTriangle(67, 235, 35, 210, 100, 210, TFT_YELLOW);
+}
 
 void setup() {
   Serial.begin(115200);
   Serial.println("ESP32 BLE");
-  // NimBLEDevice::init("");
+  pinMode(kLeftButtonPin, INPUT_PULLUP);
+  pinMode(kRightButtonPin, INPUT_PULLUP);
+  keyboardMutex = xSemaphoreCreateMutex();
+  assert(keyboardMutex != nullptr);
+  drawNavigationLegend();
   bleKeyboard.begin();
+  xTaskCreate(pollNavigation, "navigation", 2048, nullptr, 1, nullptr);
   pBLEScan = NimBLEDevice::getScan();
-
-  // pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
 
   pBLEScan->setActiveScan(true);
 }
@@ -61,9 +180,18 @@ union float2bytes {
 };
 
 void loop() {
-    if (!bleKeyboard.isConnected()) {
+  if (!bleKeyboard.isConnected()) {
     delay(100);
     return;  // let Windows pair first
+  }
+
+  if (glmClient != nullptr) {
+    if (glmClient->isConnected()) {
+      delay(100);
+      return;
+    }
+    NimBLEDevice::deleteClient(glmClient);
+    glmClient = nullptr;
   }
 
   NimBLEScanResults foundDevices = pBLEScan->start(3);
@@ -77,6 +205,7 @@ void loop() {
 
       NimBLEClient *pClient = NimBLEDevice::createClient();
       if (pClient->connect(advertisedDevice->getAddress())) {
+        glmClient = pClient;
         Serial.println(String("Connected to device ") +
                        advertisedDevice->getAddress().toString().c_str());
 
@@ -103,10 +232,12 @@ void loop() {
                     buf.b[2] = pData[9];
                     buf.b[3] = pData[10];
                     Serial.printf("Got length, %.0fmm\r\n", buf.f * 1000.0f);
+                    xSemaphoreTake(keyboardMutex, portMAX_DELAY);
                     if (bleKeyboard.isConnected()) {
                       bleKeyboard.printf("%.0f", buf.f * 1000.0f);
                       bleKeyboard.write(KEY_RETURN);
                     }
+                    xSemaphoreGive(keyboardMutex);
                   } else {
                   }
                 });
@@ -128,6 +259,7 @@ void loop() {
         }
 
       } else {
+        NimBLEDevice::deleteClient(pClient);
         Serial.println(String("Unable to connect to device ") +
                        advertisedDevice->getAddress().toString().c_str());
       }
