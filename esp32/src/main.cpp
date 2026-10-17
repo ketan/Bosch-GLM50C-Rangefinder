@@ -3,6 +3,7 @@
 #include <NimBLEDevice.h>
 #include <TFT_eSPI.h>
 #include <battery_percent.h>
+#include <SimpleKalmanFilter.h>
 #include <cassert>
 #include <esp32-hal-cpu.h>
 #include <esp_sleep.h>
@@ -263,13 +264,20 @@ void updateConnectionStatus() {
 // T-Display: battery sense on GPIO34 via 2x100k divider (reads half of Vbat).
 static void updateBattery() {
     static uint32_t last = 0;
-    if (last && millis() - last < 10000) {
+    static uint32_t lastDisplay = 0;
+    static SimpleKalmanFilter voltageFilter(8, 8, 0.05f);
+    if (last && millis() - last < 100) {
         return;
     }
     last = millis();
-    const uint16_t mv = analogReadMilliVolts(34) * 2;
+    const uint16_t sampleMv = analogReadMilliVolts(34) * 2;
+    const uint16_t mv = static_cast<uint16_t>(voltageFilter.updateEstimate(sampleMv) + 0.5f);
     const uint8_t pct = battery_percent_from_millivolts(&battery_percent_curve_lipo, mv);
     bleKeyboard.setBatteryLevel(pct); // BLE Battery Service, visible to the computer
+    if (lastDisplay && millis() - lastDisplay < 1000) {
+        return;
+    }
+    lastDisplay = millis();
     if (sleepCountdownActive) {
         return;
     }
