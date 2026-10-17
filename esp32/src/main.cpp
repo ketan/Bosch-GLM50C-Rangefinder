@@ -163,7 +163,7 @@ void updateLaserSleepTimer() {
     const int seconds =
             (kLaserSleepCountdownMs - countdownElapsed + 999) / 1000;
     if (seconds != lastLaserSleepSeconds || !laserSleepCountdownActive) {
-        Serial.printf("No laser found; sleeping in %d seconds\r\n", seconds);
+        Serial.printf("No laser found; sleeping in %d seconds\r", seconds);
         lastLaserSleepSeconds = seconds;
         laserSleepCountdownActive = true;
         drawLaserSleepCountdown(seconds);
@@ -261,7 +261,7 @@ void updateConnectionStatus() {
 }
 
 // T-Display: battery sense on GPIO34 via 2x100k divider (reads half of Vbat).
-void updateBattery() {
+static void updateBattery() {
     static uint32_t last = 0;
     if (last && millis() - last < 10000) {
         return;
@@ -307,6 +307,7 @@ void drawNavigationLegend() {
 
 void setup() {
     Serial.begin(115200);
+    delay(100);
     Serial.println("ESP32 BLE");
     // ponytail: 80 MHz supports BLE HID; raise only if it proves unreliable.
     assert(setCpuFrequencyMhz(kCpuFrequencyMhz));
@@ -400,15 +401,13 @@ void loop() {
     }
 
     updateLaserSleepTimer();
-    NimBLEScanResults foundDevices =
-            pBLEScan->start(laserSleepCountdownActive ? 1 : 3);
+    NimBLEScanResults foundDevices = pBLEScan->start(laserSleepCountdownActive ? 1 : 3);
 
-    Serial.printf("Found %d devices\r\n", foundDevices.getCount());
+    Serial.printf("Found %d devices\r", foundDevices.getCount());
 
     for (NimBLEAdvertisedDevice *advertisedDevice: foundDevices) {
         if (advertisedDevice->isAdvertisingService(svcUUID)) {
-            Serial.println(String("Connecting to device ") +
-                           advertisedDevice->getAddress().toString().c_str());
+            Serial.println(String("Connecting to device ") + advertisedDevice->getAddress().toString().c_str());
 
             NimBLEClient *pClient = NimBLEDevice::createClient();
             if (pClient->connect(advertisedDevice->getAddress())) {
@@ -440,7 +439,7 @@ void loop() {
                                     buf.b[1] = pData[8];
                                     buf.b[2] = pData[9];
                                     buf.b[3] = pData[10];
-                                    Serial.printf("Got length, %.0fmm\r\n", buf.f * 1000.0f);
+                                    Serial.printf("Got length, %.0fmm\r", buf.f * 1000.0f);
                                     xSemaphoreTake(keyboardMutex, portMAX_DELAY);
                                     if (bleKeyboard.isConnected()) {
                                         bleKeyboard.printf("%.0f", buf.f * 1000.0f);
@@ -472,8 +471,8 @@ void loop() {
                                advertisedDevice->getAddress().toString().c_str());
             }
         } else {
-            // Serial.println(String("Skipping device ") +
-            //                advertisedDevice->getAddress().toString().c_str());
+            Serial.printf("Skipping device %s\n",
+                          advertisedDevice->getAddress().toString().c_str());
         }
     }
 }
