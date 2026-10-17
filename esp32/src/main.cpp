@@ -60,8 +60,12 @@ volatile bool sleepCountdownActive = false;
 unsigned long laserMissingSince = 0;
 int lastLaserSleepSeconds = -1;
 bool laserSleepCountdownActive = false;
+static portMUX_TYPE batteryMux = portMUX_INITIALIZER_UNLOCKED;
+static uint16_t batteryMv = 0;
+static uint8_t batteryPercent = 0;
 
 void drawNavigationLegend();
+static void pollBattery(void *);
 
 void sendKey(uint8_t key) {
     xSemaphoreTake(keyboardMutex, portMAX_DELAY);
@@ -263,21 +267,21 @@ void updateConnectionStatus() {
 
 // T-Display: battery sense on GPIO34 via 2x100k divider (reads half of Vbat).
 static void updateBattery() {
-    static uint32_t last = 0;
     static uint32_t lastDisplay = 0;
-    static SimpleKalmanFilter voltageFilter(8, 8, 0.05f);
-    if (last && millis() - last < 100) {
-        return;
-    }
-    last = millis();
-    const uint16_t sampleMv = analogReadMilliVolts(34) * 2;
-    const uint16_t mv = static_cast<uint16_t>(voltageFilter.updateEstimate(sampleMv) + 0.5f);
-    const uint8_t pct = battery_percent_from_millivolts(&battery_percent_curve_lipo, mv);
-    bleKeyboard.setBatteryLevel(pct); // BLE Battery Service, visible to the computer
     if (lastDisplay && millis() - lastDisplay < 1000) {
         return;
     }
     lastDisplay = millis();
+    uint16_t mv;
+    uint8_t pct;
+    portENTER_CRITICAL(&batteryMux);
+    mv = batteryMv;
+    pct = batteryPercent;
+    portEXIT_CRITICAL(&batteryMux);
+    if (mv == 0) {
+        return;
+    }
+    bleKeyboard.setBatteryLevel(pct); // BLE Battery Service, visible to the computer
     if (sleepCountdownActive) {
         return;
     }
@@ -287,6 +291,23 @@ static void updateBattery() {
     tft.setTextPadding(80);
     tft.drawRightString(buf, 134, 2, 2);
     tft.setTextPadding(0);
+}
+
+static void pollBattery(void *) {
+    static SimpleKalmanFilter voltageFilter(8, 8, 0.05f);
+    for (;;) {
+        const uint16_t sampleMv = analogReadMilliVolts(34) * 2;
+        const float filteredMv = voltageFilter.updateEstimate(sampleMv);
+        const uint16_t mv = static_cast<uint16_t>(lroundf(filteredMv));
+        const uint8_t pct =
+                battery_percent_from_millivolts(&battery_percent_curve_lipo, mv);
+        portENTER_CRITICAL(&batteryMux);
+        batteryMv = mv;
+        batteryPercent = pct;
+        portEXIT_CRITICAL(&batteryMux);
+        Serial.printf("Battery raw=%u mV filtered=%.1f mV\n", sampleMv, filteredMv);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 }
 
 void drawNavigationLegend() {
@@ -325,9 +346,9 @@ void setup() {
     assert(keyboardMutex != nullptr);
     drawNavigationLegend();
     bleKeyboard.begin();
+    xTaskCreate(pollBattery, "battery", 2048, nullptr, 1, nullptr);
     xTaskCreate(pollNavigation, "navigation", 2048, nullptr, 1, nullptr);
     pBLEScan = NimBLEDevice::getScan();
-
     pBLEScan->setActiveScan(true);
 }
 
